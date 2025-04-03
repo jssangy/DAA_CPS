@@ -1,0 +1,12 @@
+paths:
+  model: './checkpoint/'
+
+params:
+  action: ['follow', 'replan', 'wait']
+  hidden_size: 256
+  learning_rate: 0.001
+  gamma: 0.95
+  batch_size: 64
+  episode: 1000
+  memory_size: 10000
+  target_update_freqeuncy: 10

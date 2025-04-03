@@ -1,3 +1,4 @@
+import copy
 import heapq
 import numpy as np # use for matrix calculation
 from sklearn import neighbors  # use for dijkstra
@@ -10,6 +11,7 @@ class controller():
         
         self.agv_pos = {} # save the position of agv positions
         self.agv_next_pos = {} # save the next position of agv positions
+        self.agv_prev_pos = {} # save the previous position of agv positions
         self.agv_next_rout = {} # save the next rout position of agv
         self.control_buffer = {} # save the control output of agvs
         self.agv_state = {} # 0(start - pick up) 1(pick up - drop) 2(drop - rest) 3(rest - start)
@@ -18,7 +20,7 @@ class controller():
         self.agv_goal = {} # goal position of all agvs
         self.agv_info = {} # for GUI infomation
         self.agv_rout = {} # for routing of AGV
-        self.agv_pre_rout = {}
+        self.agv_prev_rout = {}
         self.zone = set()
         self.matrix_idx = []
         self.path_matrix = []
@@ -33,6 +35,7 @@ class controller():
         for i in range (agv_num):
             self.agv_nums.append(chr(i + 65))
             self.agv_pos[chr(i + 65)] = (0, 0)
+            self.agv_prev_pos[chr(i + 65)] = (0, 0)
             self.agv_next_rout[chr(i + 65)] = (0, 0)
             self.agv_state[chr(i + 65)] = 0 # Initial state is 0
             self.agv_mode[chr(i + 65)] = 0 # Initial mode is normal
@@ -40,7 +43,7 @@ class controller():
             self.agv_info[chr(i + 65)] = [0, 0]
             self.control_buffer[chr(i + 65)] = (0, 0)
             self.agv_rout[chr(i + 65)] = []
-            self.agv_pre_rout[chr(i + 65)] = (0, 0)
+            self.agv_prev_rout[chr(i + 65)] = (0, 0)
         
         # Map of warehouse digital twin
         self.map = map
@@ -95,24 +98,95 @@ class controller():
             
         if self.time == 0:
             self.agv_rout[num] = self.dijkstra_shortest(self.graph, self.agv_pos[num], self.agv_goal[num][self.agv_state[num]])
-            self.agv_pre_rout[num] = self.agv_pos[num]
+            self.agv_prev_rout[num] = self.agv_pos[num]
             self.agv_next_rout[num] = self.agv_rout[num][0]
     
     def make_control(self):
         self.time += 1
-        # Check there are probem.
-        if self.running_opt == 0:
-            # Make a routing for AGV
-            self.dijkstra_rout()
-        if self.running_opt == 1:
-            self.DAA1()
-        if self.running_opt == 2:
-            self.DAA2()
-        if self.running_opt == 3:
-            pass
+        self.dijkstra_rout()
+
         return (self.control_buffer, self.agv_mode)
     
-    # 수정 절대 금지!
+    # Get AGV's State for Reinforcement Learning (Optimized with NumPy)
+    def get_state(self):
+        num_agvs = len(self.agv_nums)
+        state = np.full((num_agvs, 15), -1, dtype=int)  # 기본값 -1로 채워진 배열 생성
+
+        for i, agv_id in enumerate(self.agv_nums):
+            pos = self.agv_pos[agv_id]
+            goal_pos = self.agv_goal[agv_id][self.agv_state[agv_id]]
+            remaining_nodes = self.agv_rout[agv_id][:5]
+
+            # 값 대입
+            state[i, 0:2] = pos
+            state[i, 2] = self.agv_mode[agv_id]
+            
+            # 남은 노드 값 입력
+            for j, node in enumerate(remaining_nodes):
+                state[i, 3 + j*2: 5 + j*2] = node
+
+            # 목표 위치 대입
+            state[i, 13:15] = goal_pos
+
+        return state  # shape: (N, 15)
+    
+    # Perform extra Action when event occur (Reinforcement Learning)
+    def perform_action(self, agv_id, action):
+        if action == 'follow':
+            pass
+        elif action == 'replan':
+            self.replan_rout(agv_id)
+        elif action == 'wait':
+            self.wait(agv_id)
+    
+    # Action: Replan AGV rout
+    def replan_rout(self, agv_id, edge_penalty=100, num_penalty_edges=1):
+        # 현재 위치 및 목적지 확인
+        current_pos = self.agv_pos[agv_id]
+        current_goal = self.agv_goal[agv_id][self.agv_state[agv_id]]
+
+        # 임시 그래프 복사본 생성
+        temp_graph = copy.deepcopy(self.graph)
+
+        # 기존에 계획된 경로 가져오기
+        remaining_rout = self.agv_rout[agv_id]
+
+        # AGV가 엣지 위에 있는지 체크 (노드 목록에 없으면 엣지 위로 판단)
+        if current_pos not in temp_graph:
+            previous_node = self.agv_prev_rout[agv_id]
+        else:
+            previous_node = current_pos
+
+        # 현재 위치에서 시작하여 가까운 N개의 edge 가중치를 높임
+        affected_edges = []
+
+        for next_node in remaining_rout[:num_penalty_edges]:
+            affected_edges.append((previous_node, next_node))
+            previous_node = next_node
+
+        # affected_edges의 가중치를 높임
+        for node1, node2 in affected_edges:
+            if node2 in temp_graph[node1]:
+                temp_graph[node1][node2] = edge_penalty
+            if node1 in temp_graph[node2]:
+                temp_graph[node2][node1] = edge_penalty
+
+        # 경로 재계산
+        new_rout = self.dijkstra_shortest(temp_graph, current_pos, current_goal)
+
+        # 재계산 결과 확인
+        if new_rout == -1 or len(new_rout) == 0:
+            return False  # 실패
+        else:
+            self.agv_rout[agv_id] = new_rout
+            return True  # 성공
+
+    # Action: Wait AGV    
+    def wait(self, agv_id):
+        self.control_buffer[agv_id] = (0, 0)
+        self.agv_mode[agv_id] = (0, 0)
+    
+    # 수정 절대 금지! (수정해버림 ㅋ)
     def dijkstra_rout(self):
         # Get the Dijkstra rout of AGVs
         for num in self.agv_nums:
@@ -129,6 +203,7 @@ class controller():
             
             # If AGV need next rout! (rout node)
             if (((self.map[pos[1]][pos[0]] == 6) or (pos in self.agv_goal[num])) and (self.agv_mode[num] == 0)):
+                self.agv_prev_rout = pos
                 next_rout = self.agv_rout[num].pop(0)
                 
                 # Save next rout position
@@ -152,241 +227,29 @@ class controller():
                 self.agv_next_pos[num] = (pos[0] + self.control_buffer[num][0], pos[1] + self.control_buffer[num][1]) 
                 
         # Collision prevention => Dead Lock
-        for num in self.agv_nums:
-            pos = self.agv_pos[num]
-            next_pos = self.agv_next_pos[num]
+        for num1 in self.agv_nums:
+            num1_pos = self.agv_pos[num1]
+            num1_next_pos = self.agv_next_pos[num1]
+
+            # Deadlock 상태 초기화
+            self.agv_mode[num1] = 0
+
             for num2 in self.agv_nums:
-                if num != num2:
-                    if (next_pos == self.agv_next_pos[num2]):
-                        self.agv_mode[num] = 1
-                        
-            if self.map[pos[1]][pos[0]] == 1:
-                self.agv_mode[num] = 2
-                self.control_buffer[num] = (0, 0)
+                if num1 != num2:
+                    num2_pos = self.agv_pos[num2]
+                    num2_next_pos = self.agv_next_pos[num2]
+                    num2_control_buffer = self.control_buffer[num2]
+                    if (num1_next_pos == num2_next_pos):
+                        self.agv_mode[num1] = 1
+                    elif (num1_next_pos == num2_pos and num2_next_pos == num1_pos):
+                        self.agv_mode[num1] = 1
+                    elif (num1_next_pos == num2_pos and num2_control_buffer == (0, 0)):
+                        self.agv_mode[num1] = 1
+          
+            if self.map[num1_pos[1]][num1_pos[0]] == 1:
+                self.agv_mode[num1] = 2
+                self.control_buffer[num1] = (0, 0)    
         
-    # J Yoo et.al An algorithm for deadlock avoidance in an AGV System, 2005
-    def DAA1(self):
-        # Get the Dijkstra rout of AGVs
-        for num in self.agv_nums:
-            pos = self.agv_pos[num]
-            state = self.agv_state[num]
-            goal = self.agv_goal[num][state]
-        
-            # Change the state of AGVs
-            if (pos == goal):
-                state = self.change_state(num, state)
-                goal = self.agv_goal[num][state]
-                self.agv_mode[num] = 0
-                self.agv_rout[num] = self.dijkstra_shortest(self.graph, pos, goal)
-            
-            # Deadlock occurs
-            if ((self.agv_mode[num] == 1)):
-                # If AGV locates in rout (node)
-                if (pos == self.agv_pre_rout[num]): #or (pos == self.agv_next_rout[num])):
-                    next_rout =  self.agv_rout[num][0]
-                    self.insert_edge(num, (pos, next_rout))
-                    if (len(self.agv_rout[num]) > 1):
-                        next_next_rout = self.agv_rout[num][1]
-                        self.insert_edge(num, (next_rout, next_next_rout))
-                
-                # AGV is in the zone (between the nodes)
-                else:
-                    # AGV can not enter this zone!
-                    self.delete_edge((self.agv_pre_rout[num], self.agv_next_rout[num]), num)
-                    # But AGV can enter the next zone
-                    if (len(self.agv_rout[num]) > 1):
-                        next_next_rout = self.agv_rout[num][1]
-                        self.insert_edge(num, (next_rout, next_next_rout))
-                
-                # If next zone is idle
-                now_zone = (self.agv_pre_rout[num], self.agv_next_rout[num])
-                if (self.idle_zone(now_zone, num)):
-                    if (self.zone_control(num, now_zone)):
-                        #print(num, " need to find another way")
-                        # if it has alternative routings
-                        for neighbors in self.find_neighbors(now_zone[0][0], now_zone[0][1], False):
-                            self.delete_edge(num, (now_zone[0], neighbors))
-                        # Make Alternative pass
-                        
-                    else:
-                        print(num, " has no problem")
-                        
-                # Zone is busy!
-                else:
-                    #print(num, "is busy at", now_zone)
-                    # Wait!
-                    self.control_buffer[num] = (0, 0)
-            
-            # Normal Mode
-            if ((self.agv_mode[num] == 0)):
-                # If AGV need next rout! (rout node)
-                if (((pos == self.agv_next_rout[num]) or (pos in self.agv_goal[num]))):
-                    self.out_zone((self.agv_pre_rout[num], self.agv_next_rout[num]))
-                    #print(num, "out zone", (self.agv_pre_rout[num], self.agv_next_rout[num]))
-                    next_rout = self.agv_rout[num][0]
-                    
-                    # Determine new control signal
-                    if next_rout[0] > pos[0]:
-                        self.control_buffer[num] = (1, 0)
-                    elif next_rout[0] < pos[0]:
-                        self.control_buffer[num] = (-1, 0)
-                    elif next_rout[1] > pos[1]:
-                        self.control_buffer[num] = (0, 1)
-                    elif next_rout[1] < pos[1]:
-                        self.control_buffer[num] = (0, -1)
-                    else:
-                        self.control_buffer[num] = (0, 0)
-                    self.agv_next_pos[num] = (pos[0] + self.control_buffer[num][0], pos[1] + self.control_buffer[num][1])
-                    
-                    # Transition of rout infomation
-                    self.agv_pre_rout[num] = pos
-                    self.agv_next_rout[num] = self.agv_rout[num][0]
-                    #print("Make next rout of", num, "for" ,self.agv_next_rout[num] )
-                
-                # routing not changed
-                else:
-                    self.agv_next_pos[num] = (pos[0] + self.control_buffer[num][0], pos[1] + self.control_buffer[num][1]) 
-                
-        # Collision prevention => Deadlock
-        for num in self.agv_nums:
-            now_zone = (self.agv_pre_rout[num], self.agv_next_rout[num])
-            #print(num, "now in ", now_zone)
-            if (not self.idle_zone(now_zone, num)):
-                self.agv_mode[num] = 1
-                self.control_buffer[num] = (0, 0)
-                continue
-                        
-            if self.map[self.agv_pos[num][1]][self.agv_pos[num][0]] == 1:
-                self.agv_mode[num] = 2
-                self.control_buffer[num] = (0, 0)
-                continue
-            
-            for num2 in self.agv_nums:
-                if num != num2:
-                    if (self.agv_next_pos[num] == self.agv_next_pos[num2]):
-                        self.agv_mode[num] = 1
-                        self.control_buffer[num] = (0, 0)
-                        break
-            
-            #print(num, "is now in", self.agv_pos[num], "with ", self.map[pos[1]][pos[0]])
-            if (self.agv_pos[num] == self.agv_pre_rout[num]) and ((self.agv_mode[num] == 0)):
-                # Everything is OKay, just go
-                #print(num, "in zone", (self.agv_pre_rout[num], self.agv_next_rout[num]))
-                self.in_zone((self.agv_pre_rout[num], self.agv_next_rout[num]), num)
-                self.agv_rout[num].pop(0) 
-                
-        return 0
-    
-    # J Yoo et.al An algorithm for deadlock avoidance in an AGV System, 2005
-    def DAA2(self):
-        # Get the Dijkstra rout of AGVs
-        for num in self.agv_nums:
-            pos = self.agv_pos[num]
-            state = self.agv_state[num]
-            goal = self.agv_goal[num][state]
-        
-            # Change the state of AGVs
-            if (pos == goal):
-                state = self.change_state(num, state)
-                goal = self.agv_goal[num][state]
-                self.agv_mode[num] = 0
-                self.agv_rout[num] = self.dijkstra_shortest(self.graph, pos, goal)
-            
-            # Deadlock occurs
-            if ((self.agv_mode[num] == 1)):
-                if (pos == self.agv_next_rout[num]):
-                    print("Okay!")
-                    self.agv_mode[num] = 0
-                    self.agv_rout[num] = self.dijkstra_shortest(self.graph, pos, goal)
-                
-                # If AGV locates in rout (node)
-                if (pos == self.agv_pre_rout[num]):
-                    print(num, "is now in", pos, ", and going to ", self.agv_next_rout[num])
-                    next_rout = self.alter_path(self.agv_pos[num], self.agv_next_rout[num])
-                    print(num, "make alter path to", next_rout)
-                    
-                    # Determine new control signal
-                    if next_rout[0] > pos[0]:
-                        self.control_buffer[num] = (1, 0)
-                    elif next_rout[0] < pos[0]:
-                        self.control_buffer[num] = (-1, 0)
-                    elif next_rout[1] > pos[1]:
-                        self.control_buffer[num] = (0, 1)
-                    elif next_rout[1] < pos[1]:
-                        self.control_buffer[num] = (0, -1)
-                    else:
-                        self.control_buffer[num] = (0, 0)
-                    self.agv_next_pos[num] = (pos[0] + self.control_buffer[num][0], pos[1] + self.control_buffer[num][1])
-                    
-                    # Transition of rout infomation
-                    self.agv_pre_rout[num] = pos
-                    self.agv_next_rout[num] = next_rout
-                    
-                # AGV is in the zone (between the nodes)
-                else:
-                    pass
-            
-            # Normal Mode
-            if ((self.agv_mode[num] == 0)):
-                # If AGV need next rout! (rout node)
-                if (((pos == self.agv_next_rout[num]) or (pos in self.agv_goal[num]))):
-                    self.out_zone((self.agv_pre_rout[num], self.agv_next_rout[num]))
-                    #print(num, "out zone", (self.agv_pre_rout[num], self.agv_next_rout[num]))
-                    next_rout = self.agv_rout[num][0]
-                    
-                    # Determine new control signal
-                    if next_rout[0] > pos[0]:
-                        self.control_buffer[num] = (1, 0)
-                    elif next_rout[0] < pos[0]:
-                        self.control_buffer[num] = (-1, 0)
-                    elif next_rout[1] > pos[1]:
-                        self.control_buffer[num] = (0, 1)
-                    elif next_rout[1] < pos[1]:
-                        self.control_buffer[num] = (0, -1)
-                    else:
-                        self.control_buffer[num] = (0, 0)
-                    self.agv_next_pos[num] = (pos[0] + self.control_buffer[num][0], pos[1] + self.control_buffer[num][1])
-                    
-                    # Transition of rout infomation
-                    self.agv_pre_rout[num] = pos
-                    self.agv_next_rout[num] = self.agv_rout[num][0]
-                    #print("Make next rout of", num, "for" ,self.agv_next_rout[num] )
-                
-                # routing not changed
-                else:
-                    self.agv_next_pos[num] = (pos[0] + self.control_buffer[num][0], pos[1] + self.control_buffer[num][1]) 
-                
-        # Collision prevention => Deadlock
-        for num in self.agv_nums:
-            now_zone = (self.agv_pre_rout[num], self.agv_next_rout[num])
-            #print(num, "now in ", now_zone)
-            if (not self.idle_zone(now_zone, num)):
-                self.agv_mode[num] = 1
-                self.control_buffer[num] = (0, 0)
-                continue
-                        
-            if self.map[self.agv_pos[num][1]][self.agv_pos[num][0]] == 1:
-                self.agv_mode[num] = 2
-                self.control_buffer[num] = (0, 0)
-                continue
-            
-            for num2 in self.agv_nums:
-                if num != num2:
-                    if (self.agv_next_pos[num] == self.agv_next_pos[num2]):
-                        self.agv_mode[num] = 1
-                        self.control_buffer[num] = (0, 0)
-                        break
-            
-            #print(num, "is now in", self.agv_pos[num], "with ", self.map[pos[1]][pos[0]])
-            if (self.agv_pos[num] == self.agv_pre_rout[num]) and ((self.agv_mode[num] == 0)):
-                # Everything is OKay, just go
-                #print(num, "in zone", (self.agv_pre_rout[num], self.agv_next_rout[num]))
-                self.in_zone((self.agv_pre_rout[num], self.agv_next_rout[num]), num)
-                self.agv_rout[num].pop(0) 
-                
-        return 0
-    
-    
     # ======================== Routing Functions ============================================
     def graphing(self):
         self.graph = {}

@@ -46,7 +46,7 @@ class GUI():
 
         # menu (left side)
         self.menu = tk.Frame(self.win_frame, width = 200, height = 516, highlightbackground = '#595959', highlightthickness=2)
-        self.menu_label = tk.Label(self.menu, text = 'Control Panel', font = self.font_style1)
+        self.menu_label = tk.Label(self.menu, text = 'Control Pannel', font = self.font_style1)
         self.Start_button = tk.Button(self.menu, text= "Start", bg = '#728f96', 
                                     font = self.font_style1, activebackground='#d45f5f')
         self.Start_button.bind("<Button-1>", self.start_env)
@@ -65,7 +65,7 @@ class GUI():
         
         # Setting(Middle side)
         self.setting = tk.Frame(self.win_frame, width = 200, height = 516, highlightbackground = '#595959', highlightthickness=2)   
-        self.setting_label = tk.Label(self.setting, text = 'Setting Panel', font = self.font_style1)   
+        self.setting_label = tk.Label(self.setting, text = 'Setting Pannel', font = self.font_style1)   
         
         # Speed setting
         self.speed_var = tk.IntVar()
@@ -85,7 +85,7 @@ class GUI():
         
         # State (Right side)
         self.state = tk.Frame(self.win_frame, width = 400, height = 350, highlightbackground = '#595959', highlightthickness=2)   
-        self.state_label = tk.Label(self.state, text = 'State Panel', font = self.font_style1)  
+        self.state_label = tk.Label(self.state, text = 'State Pannel', font = self.font_style1)  
         
         self.state_scroll = tk.Scrollbar(self.state, orient='vertical')
         self.state_box = tk.Listbox(self.state, yscrollcommand = self.state_scroll.set, width = 400, height = 400, font = self.font_style2)
@@ -93,7 +93,7 @@ class GUI():
         
         # Log (Right side)
         self.log = tk.Frame(self.win_frame, width = 400, height = 166, highlightbackground = '#595959', highlightthickness=2)   
-        self.log_label = tk.Label(self.log, text = 'Log Panel', font = self.font_style1) 
+        self.log_label = tk.Label(self.log, text = 'Log Pannel', font = self.font_style1) 
         self.log_scroll = tk.Scrollbar(self.log, orient='vertical')
         self.log_box = tk.Listbox(self.log, yscrollcommand = self.log_scroll.set, width = 400, height = 400, font=self.font_style2)
         self.log_scroll.config(command=self.log_box.yview)
@@ -137,6 +137,18 @@ class GUI():
         self.log_box.pack()
         self.log.pack_propagate(0)
         
+        # self.pygame_frame.pack(side="left")
+        # self.embed.pack()
+        
+        # This embeds the pygame window
+        os.environ['SDL_WINDOWID'] = str(self.embed.winfo_id())
+        system = platform.system()
+        if system == "Windows":
+            os.environ['SDL_VIDEODRIVER'] = 'windib'
+        elif system == "Linux":
+            os.environ['SDL_VIDEODRIVER'] = 'x11'
+
+        self.root.update_idletasks()
         
         # Start pygame
         pygame.init()
@@ -186,9 +198,7 @@ class GUI():
             self.make_state_info(run)
             self.redrawWindow(self.env.Get_AGV())
         # https://stackoverflow.com/questions/20165492/pygame-window-not-responding-after-a-few-seconds
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                pygame.quit()
+        pygame.event.get()
         # After <speed_var> second, call run_env again (create a recursive loop)
         self.root.after(self.speed_var.get(), self.run_env)
     
