@@ -8,5 +8,9 @@ params:
   gamma: 0.95
   batch_size: 64
   episode: 1000
+  timestep: 3600
   memory_size: 10000
-  target_update_freqeuncy: 10
+  target_update_frequency: 10
+  goal_reward: 100
+  deadlock_penalty: 50
+  delayed_penalty: 1

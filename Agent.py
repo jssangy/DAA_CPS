@@ -1,9 +1,9 @@
 import random
+import numpy as np
 from collections import deque
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import numpy as np
 
 class DQN(nn.Module):
     def __init__(self, state_size, hidden_size, action_size):
@@ -33,20 +33,19 @@ class ReplayBuffer:
         self.buffer = deque(maxlen=capacity)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
-    def push(self, state, action, reward, next_state, done):
-        self.buffer.append((state, action, reward, next_state, done))
+    def push(self, state, action, reward, next_state):
+        self.buffer.append((state, action, reward, next_state))
     
     def sample(self, batch_size):
         batch = random.sample(self.buffer, batch_size)
-        states, actions, rewards, next_states, dones = zip(*batch)
+        states, actions, rewards, next_states = zip(*batch)
         
-        states = torch.LongTensor(states).to(self.device)
+        states = torch.FloatTensor(np.array(states)).to(self.device)
         actions = torch.LongTensor(actions).to(self.device)
-        rewards = torch.LongTensor(rewards).to(self.device)
-        next_states = torch.LongTensor(next_states).to(self.device)
-        dones = torch.LongTensor(dones).to(self.device)
+        rewards = torch.FloatTensor(rewards).to(self.device)
+        next_states = torch.FloatTensor(np.array(next_states)).to(self.device)
         
-        return states, actions, rewards, next_states, dones
+        return states, actions, rewards, next_states
     
     def __len__(self):
         return len(self.buffer)
@@ -69,26 +68,25 @@ class Agent:
         # 학습 파라미터
         self.gamma = gamma
         self.action_size = action_size
+
+        self.loss = 0.0
         
-        # 현재 학습 상태 추적
-        self.current_loss = 0
-        self.current_q_value = 0
+    def remember(self, state, action, reward, next_state):
+        self.memory.push(state, action, reward, next_state)
     
-    def remember(self, state, action, reward, next_state, done):
-        self.memory.push(state, action, reward, next_state, done)
-    
-    def act(self, state):
+    def act(self, state, env, agv_id):
         with torch.no_grad():
-            state = torch.LongTensor(state).to(self.device)
+            state = torch.FloatTensor(state).to(self.device)
             q_values = self.policy_net(state)
-            self.current_q_value = q_values.max().item()
-            return torch.argmax(q_values).item()
+            action = torch.argmax(q_values).item()
+            env.controller.perform_action(agv_id, action)
+            return action
     
     def replay(self, batch_size):
         if len(self.memory) < batch_size:
             return
         
-        states, actions, rewards, next_states, dones = self.memory.sample(batch_size)
+        states, actions, rewards, next_states = self.memory.sample(batch_size)
         
         # 현재 Q 값 계산
         current_q = self.policy_net(states).gather(1, actions.unsqueeze(1))
@@ -98,15 +96,14 @@ class Agent:
             next_q = self.target_net(next_states).max(1)[0]
         
         # 타겟 Q 값 계산
-        target_q = rewards + (self.gamma * next_q * (1 - dones))
+        target_q = rewards + (self.gamma * next_q)
         
         # Huber Loss 사용 (MSE 대신)
-        self.current_loss = F.smooth_l1_loss(current_q.squeeze(), target_q).item()
+        self.loss = F.smooth_l1_loss(current_q.squeeze(), target_q)
         
         # 역전파 및 최적화
         self.optimizer.zero_grad()
-        loss = F.smooth_l1_loss(current_q.squeeze(), target_q)
-        loss.backward()
+        self.loss.backward()
         
         # 그래디언트 클리핑
         torch.nn.utils.clip_grad_norm_(self.policy_net.parameters(), 1.0)
@@ -120,7 +117,7 @@ class Agent:
         torch.save({
             'policy_net_state_dict': self.policy_net.state_dict(),
             'target_net_state_dict': self.target_net.state_dict(),
-            'optimizer_state_dict': self.optimizer.state_dict()
+            'optimizer_state_dict': self.optimizer.state_dict(),
         }, filepath)
     
     def load(self, filepath):
@@ -129,10 +126,5 @@ class Agent:
         self.target_net.load_state_dict(checkpoint['target_net_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
     
-    def get_statistics(self):
-        return {
-            'current_loss': self.current_loss,
-            'current_q_value': self.current_q_value,
-            'memory_size': len(self.memory)
-        }
-    
+    def get_loss(self):
+        return self.loss.item() if isinstance(self.loss, torch.Tensor) else self.loss

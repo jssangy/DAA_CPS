@@ -8,7 +8,6 @@ import Funct
 class controller():
     
     def __init__(self, agv_num, map):
-        
         self.agv_pos = {} # save the position of agv positions
         self.agv_next_pos = {} # save the next position of agv positions
         self.agv_prev_pos = {} # save the previous position of agv positions
@@ -20,7 +19,9 @@ class controller():
         self.agv_goal = {} # goal position of all agvs
         self.agv_info = {} # for GUI infomation
         self.agv_rout = {} # for routing of AGV
-        self.agv_prev_rout = {}
+        self.agv_prev_rout = {} # previous node
+        self.optimal_time = {} # Optimal time to reach goal
+        self.actual_time = {} # Actual time to reach goal
         self.zone = set()
         self.matrix_idx = []
         self.path_matrix = []
@@ -44,6 +45,8 @@ class controller():
             self.control_buffer[chr(i + 65)] = (0, 0)
             self.agv_rout[chr(i + 65)] = []
             self.agv_prev_rout[chr(i + 65)] = (0, 0)
+            self.optimal_time[chr(i + 65)] = 0
+            self.actual_time[chr(i + 65)] = 0
         
         # Map of warehouse digital twin
         self.map = map
@@ -81,13 +84,13 @@ class controller():
     # Change the AGV's state
     def change_state(self, num, state):
         if state != 3:
-            self.agv_state[num] = state + 1
-            return self.agv_state[num]
+            self.agv_state[num] = state + 1   
         else:
             self.agv_state[num] = 0
             self.agv_info[num][0] += 1
             self.whole_product += 1
-            return self.agv_state[num]
+        
+        return self.agv_state[num]
         
     # Update data from sensing of agv
     def get_sensing(self, num, data):
@@ -104,7 +107,6 @@ class controller():
     def make_control(self):
         self.time += 1
         self.dijkstra_rout()
-
         return (self.control_buffer, self.agv_mode)
     
     # Get AGV's State for Reinforcement Learning (Optimized with NumPy)
@@ -132,11 +134,11 @@ class controller():
     
     # Perform extra Action when event occur (Reinforcement Learning)
     def perform_action(self, agv_id, action):
-        if action == 'follow':
+        if action == 0: # Follow
             pass
-        elif action == 'replan':
+        elif action == 1: # Replan
             self.replan_rout(agv_id)
-        elif action == 'wait':
+        elif action == 2: # Wait
             self.wait(agv_id)
     
     # Action: Replan AGV rout
@@ -153,16 +155,16 @@ class controller():
 
         # AGV가 엣지 위에 있는지 체크 (노드 목록에 없으면 엣지 위로 판단)
         if current_pos not in temp_graph:
-            previous_node = self.agv_prev_rout[agv_id]
+            start_node = self.agv_prev_rout[agv_id]
         else:
-            previous_node = current_pos
+            start_node = current_pos
 
         # 현재 위치에서 시작하여 가까운 N개의 edge 가중치를 높임
         affected_edges = []
 
         for next_node in remaining_rout[:num_penalty_edges]:
-            affected_edges.append((previous_node, next_node))
-            previous_node = next_node
+            affected_edges.append((start_node, next_node))
+            start_node = next_node
 
         # affected_edges의 가중치를 높임
         for node1, node2 in affected_edges:
@@ -172,10 +174,11 @@ class controller():
                 temp_graph[node2][node1] = edge_penalty
 
         # 경로 재계산
-        new_rout = self.dijkstra_shortest(temp_graph, current_pos, current_goal)
+        new_rout = self.dijkstra_shortest(temp_graph, start_node, current_goal)
 
         # 재계산 결과 확인
         if new_rout == -1 or len(new_rout) == 0:
+            print(f"경로 재계산 실패: AGV {agv_id}, 현재 위치 {current_pos}, 시작 위치 {start_node}, 목표 위치 {current_goal}")
             return False  # 실패
         else:
             self.agv_rout[agv_id] = new_rout
@@ -193,17 +196,28 @@ class controller():
             pos = self.agv_pos[num]
             state = self.agv_state[num]
             goal = self.agv_goal[num][state]
-        
+            prev_pos = self.agv_prev_pos[num]
+
+            if (prev_pos in self.agv_goal[num] and pos != prev_pos):
+                self.actual_time[num] = 1 # Actual time initialization
+                
+                # Compute optimal time to reach goal
+                path = self.dijkstra_shortest(self.graph, prev_pos, goal)
+                self.optimal_time[num] = sum(Funct.get_distance(path[i], path[i+1]) for i in range(len(path)-1))
+            else:
+                self.actual_time[num] += 1
+
             # Change the state of AGVs
             if (pos == goal):
                 state = self.change_state(num, state)
                 goal = self.agv_goal[num][state]
                 self.agv_mode[num] = 0
                 self.agv_rout[num] = self.dijkstra_shortest(self.graph, pos, goal)
+                self.agv_prev_rout[num] = pos
             
             # If AGV need next rout! (rout node)
             if (((self.map[pos[1]][pos[0]] == 6) or (pos in self.agv_goal[num])) and (self.agv_mode[num] == 0)):
-                self.agv_prev_rout = pos
+                self.agv_prev_rout[num] = pos
                 next_rout = self.agv_rout[num].pop(0)
                 
                 # Save next rout position
