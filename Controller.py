@@ -108,18 +108,19 @@ class controller():
     def set_actions(self, actions):
         self.actions.update(actions)
 
-    def make_control(self, actions):
-        self.time += 1
-        
-        for num, action in actions.items():
-            if action == 0:
-                self.dijkstra_rout(num)
-            elif action == 1:
-                self.replan_rout(num)
-            elif action == 2:
-                self.wait(num)
+    def update_control(self, num):
+        action = self.actions[num]
+        if action == 0:
+            self.dijkstra_rout()
+        elif action == 1:
+            self.replan_rout()
+        elif action == 2:
+            self.wait()
 
-        return (self.control_buffer, self.agv_mode)
+        return self.get_control(num)
+    
+    def get_control(self, num):
+        return (self.control_buffer[num], self.agv_mode[num])
     
     def make_control(self):
         self.time += 1

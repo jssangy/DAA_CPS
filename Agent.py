@@ -54,18 +54,14 @@ class DQN_Agent:
     def __init__(self, state_size, hidden_size, action_size, lr, gamma, memory_size):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
-        # DQN 네트워크 초기화
         self.policy_net = DQN(state_size, hidden_size, action_size).to(self.device)
         self.target_net = DQN(state_size, hidden_size, action_size).to(self.device)
         self.target_net.load_state_dict(self.policy_net.state_dict())
         
-        # 옵티마이저 및 손실 함수
         self.optimizer = torch.optim.Adam(self.policy_net.parameters(), lr=lr)
         
-        # 경험 리플레이 메모리
         self.memory = ReplayBuffer(memory_size)
         
-        # 학습 파라미터
         self.gamma = gamma
         self.action_size = action_size
 
@@ -87,21 +83,16 @@ class DQN_Agent:
         
         states, actions, rewards, next_states = self.memory.sample(batch_size)
         
-        # 현재 Q 값 계산
         current_q = self.policy_net(states)
         current_q = current_q.gather(1, actions.view(1, -1))
         
-        # 다음 상태의 최대 Q 값 계산
         with torch.no_grad():
             next_q = self.target_net(next_states).max(1)[0]
         
-        # 타겟 Q 값 계산
         target_q = rewards + (self.gamma * next_q)
         
-        # Huber Loss 사용 (MSE 대신)
         self.loss = F.smooth_l1_loss(current_q.squeeze(), target_q)
         
-        # 역전파 및 최적화
         self.optimizer.zero_grad()
         self.loss.backward()
         

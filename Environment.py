@@ -78,10 +78,13 @@ class ENV():
 
         return 
     
-    def step(self, actions, reward):
+    def step(self, actions, reward, events):
         self.time += 1
         total_reward = 0
-        events = {}
+        next_events = {}
+
+        # Controller에게 Action 미리 전달
+        self.controller.set_actions(actions)
 
         # <1단계> 모든 AGV sensing 처리
         for num, agv in self.agv_list.items():
@@ -89,33 +92,32 @@ class ENV():
             self.controller.get_sensing(num, sensing)
 
         # <2단계> 한 번만 control 신호 생성 및 전송
-        control_sig = self.controller.make_control(actions)
-
         for num, agv in self.agv_list.items():
-            pos = self.controller.agv_pos[num]
-            node_arrive = int(self.map[pos[1]][pos[0]] == 6 and pos not in self.controller.agv_goal[num])
-            deadlock = int(self.controller.agv_mode[num] == 1)
-            wait = int(self.controller.control_buffer[num] == (0, 0))
-            
-
-
-        for num, agv in self.agv_list.items():
-            agv.get_control(self.network.send([control_sig[0][num], control_sig[1][num]]))
+            if any(events[num]):
+                control_sig = self.controller.update_control(num, events[num])
+            else:
+                control_sig = self.controller.get_control(num)
+            agv.get_control(self.network.send([control_sig[0], control_sig[1]]))
 
         # <3단계> 모든 AGV의 이동 처리 및 보상 계산
         for num, agv in self.agv_list.items():
-            next_pos = agv.next_pos()
-            interact_result = self.interact(next_pos)
-
-            if interact_result == 0:
+            if (self.interact(agv.next_pos()) == 0):
                 agv.move()
 
+            # Collision with wall
+            if (self.interact(agv.next_pos()) == 1):
+                pass
+                
+            # Collision with other AGVs
+            if (self.interact(agv.next_pos()) == 2):
+                pass
+
             pos = self.controller.agv_pos[num]
-            node_arrive = int(self.map[pos[1]][pos[0]] == 6 and pos not in self.controller.agv_goal[num])
+            node_arrive = int(self.map[pos[1]][pos[0]] == 6 or pos in self.controller.agv_goal[num])
             deadlock = int(self.controller.agv_mode[num] == 1)
             wait = int(self.controller.control_buffer[num] == (0, 0))
 
-            events[num] = [node_arrive, deadlock, wait]
+            next_events[num] = [node_arrive, deadlock, wait]
 
             # Goal 도착 시 보상 및 Delay Penalty 처리
             reward = 0
@@ -134,7 +136,7 @@ class ENV():
             total_reward += reward
 
         next_states = self.get_state()
-        return next_states, total_reward, events
+        return next_states, total_reward, next_events
    
 
     # Single Process Step

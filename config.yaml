@@ -5,7 +5,7 @@ params:
   action: ['follow', 'replan', 'wait']
   hidden_size: 256
   learning_rate: 0.001
-  gamma: 0.95
+  gamma: 0.9
   batch_size: 64
   episode: 1000
   timestep: 3600

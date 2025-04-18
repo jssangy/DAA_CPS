@@ -47,6 +47,7 @@ def train(cfg):
         
         total_reward = 0
         episode_losses = []
+        events = {num: [0, 0, 0] for num in env.controller.agv_nums}
         
         for timestep in tqdm(range(timesteps), desc=f'Episode {episode}', leave=False):
             # State & Action
@@ -58,7 +59,7 @@ def train(cfg):
                     actions[num] = agent.act(state, num)
             
             # Reward & Next State
-            next_state, reward, events = env.step(actions, reward)
+            next_state, reward, events = env.step(actions, reward, events)
             
             next_state = np.array(next_state.flatten())
 
