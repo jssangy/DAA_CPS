@@ -41,7 +41,7 @@ class ReplayBuffer:
         states, actions, rewards, next_states = zip(*batch)
         
         states = torch.FloatTensor(np.array(states)).to(self.device)
-        actions = torch.LongTensor(actions).to(self.device)
+        actions = torch.LongTensor(np.array(actions)).to(self.device)
         rewards = torch.FloatTensor(rewards).to(self.device)
         next_states = torch.FloatTensor(np.array(next_states)).to(self.device)
         
@@ -50,7 +50,7 @@ class ReplayBuffer:
     def __len__(self):
         return len(self.buffer)
 
-class Agent:
+class DQN_Agent:
     def __init__(self, state_size, hidden_size, action_size, lr, gamma, memory_size):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
@@ -74,12 +74,11 @@ class Agent:
     def remember(self, state, action, reward, next_state):
         self.memory.push(state, action, reward, next_state)
     
-    def act(self, state, env, agv_id):
+    def act(self, state, agv_id):
         with torch.no_grad():
             state = torch.FloatTensor(state).to(self.device)
             q_values = self.policy_net(state)
             action = torch.argmax(q_values).item()
-            env.controller.perform_action(agv_id, action)
             return action
     
     def replay(self, batch_size):
@@ -89,7 +88,8 @@ class Agent:
         states, actions, rewards, next_states = self.memory.sample(batch_size)
         
         # 현재 Q 값 계산
-        current_q = self.policy_net(states).gather(1, actions.unsqueeze(1))
+        current_q = self.policy_net(states)
+        current_q = current_q.gather(1, actions.view(1, -1))
         
         # 다음 상태의 최대 Q 값 계산
         with torch.no_grad():

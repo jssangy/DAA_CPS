@@ -11,6 +11,4 @@ params:
   timestep: 3600
   memory_size: 10000
   target_update_frequency: 10
-  goal_reward: 100
-  deadlock_penalty: 50
-  delayed_penalty: 1
+  reward: {'goal': 100, 'deadlock': -50, 'delayed': -1}

@@ -4,7 +4,7 @@ import numpy as np
 from tqdm import tqdm
 
 from Environment import ENV
-from Agent import Agent
+from Agent import DQN_Agent
 
 def load_config(config_file):
     with open(config_file, 'r') as file:
@@ -29,12 +29,10 @@ def train(cfg):
     batch_size = cfg['params']['batch_size']
     target_update_frequency = cfg['params']['target_update_frequency']
     timesteps  = cfg['params']['timestep']
-    goal_reward = cfg['params']['goal_reward']
-    deadlock_penalty = cfg['params']['deadlock_penalty']
-    delayed_penalty = cfg['params']['delayed_penalty']
+    reward = cfg['params']['reward']
     
     # 에이전트 초기화
-    agent = Agent(state_size, hidden_size, action_size, learning_rate, gamma, memory_size)    
+    agent = DQN_Agent(state_size, hidden_size, action_size, learning_rate, gamma, memory_size)    
     
     # 훈련 모니터링을 위한 변수들
     best_reward = float('-inf')
@@ -52,20 +50,22 @@ def train(cfg):
         
         for timestep in tqdm(range(timesteps), desc=f'Episode {episode}', leave=False):
             # State & Action
-            for agv_id in env.controller.agv_nums:
-                if timestep == 0 or not any(events[agv_id]):
-                    action = 0
+            actions = {}
+            for num in env.controller.agv_nums:
+                if timestep == 0 or not any(events[num]):
+                    actions[num] = 0
                 else:
-                    action = agent.act(state, env, agv_id)
+                    actions[num] = agent.act(state, num)
             
             # Reward & Next State
-            next_state, reward, events = env.step(goal_reward, deadlock_penalty, delayed_penalty)
+            next_state, reward, events = env.step(actions, reward)
             
             next_state = np.array(next_state.flatten())
 
             total_reward += reward
 
-            agent.remember(state, action, reward, next_state)
+            actions_list = list(actions.values())
+            agent.remember(state, actions_list, reward, next_state)
             agent.replay(batch_size)
 
             loss = agent.get_loss()

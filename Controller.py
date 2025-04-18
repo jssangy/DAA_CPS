@@ -26,6 +26,7 @@ class controller():
         self.matrix_idx = []
         self.path_matrix = []
         self.zone_matrix = {}
+        self.actions = {}
         
         self.running_opt = 0
         
@@ -103,6 +104,22 @@ class controller():
             self.agv_rout[num] = self.dijkstra_shortest(self.graph, self.agv_pos[num], self.agv_goal[num][self.agv_state[num]])
             self.agv_prev_rout[num] = self.agv_pos[num]
             self.agv_next_rout[num] = self.agv_rout[num][0]
+
+    def set_actions(self, actions):
+        self.actions.update(actions)
+
+    def make_control(self, actions):
+        self.time += 1
+        
+        for num, action in actions.items():
+            if action == 0:
+                self.dijkstra_rout(num)
+            elif action == 1:
+                self.replan_rout(num)
+            elif action == 2:
+                self.wait(num)
+
+        return (self.control_buffer, self.agv_mode)
     
     def make_control(self):
         self.time += 1
@@ -114,14 +131,14 @@ class controller():
         num_agvs = len(self.agv_nums)
         state = np.full((num_agvs, 15), -1, dtype=int)  # 기본값 -1로 채워진 배열 생성
 
-        for i, agv_id in enumerate(self.agv_nums):
-            pos = self.agv_pos[agv_id]
-            goal_pos = self.agv_goal[agv_id][self.agv_state[agv_id]]
-            remaining_nodes = self.agv_rout[agv_id][:5]
+        for i, num in enumerate(self.agv_nums):
+            pos = self.agv_pos[num]
+            goal_pos = self.agv_goal[num][self.agv_state[num]]
+            remaining_nodes = self.agv_rout[num][:5]
 
             # 값 대입
             state[i, 0:2] = pos
-            state[i, 2] = self.agv_mode[agv_id]
+            state[i, 2] = self.agv_mode[num]
             
             # 남은 노드 값 입력
             for j, node in enumerate(remaining_nodes):
@@ -133,29 +150,29 @@ class controller():
         return state  # shape: (N, 15)
     
     # Perform extra Action when event occur (Reinforcement Learning)
-    def perform_action(self, agv_id, action):
+    def perform_action(self, num, action):
         if action == 0: # Follow
             pass
         elif action == 1: # Replan
-            self.replan_rout(agv_id)
+            self.replan_rout(num)
         elif action == 2: # Wait
-            self.wait(agv_id)
+            self.wait(num)
     
     # Action: Replan AGV rout
-    def replan_rout(self, agv_id, edge_penalty=100, num_penalty_edges=1):
+    def replan_rout(self, num, edge_penalty=100, num_penalty_edges=1):
         # 현재 위치 및 목적지 확인
-        current_pos = self.agv_pos[agv_id]
-        current_goal = self.agv_goal[agv_id][self.agv_state[agv_id]]
+        current_pos = self.agv_pos[num]
+        current_goal = self.agv_goal[num][self.agv_state[num]]
 
         # 임시 그래프 복사본 생성
         temp_graph = copy.deepcopy(self.graph)
 
         # 기존에 계획된 경로 가져오기
-        remaining_rout = self.agv_rout[agv_id]
+        remaining_rout = self.agv_rout[num]
 
         # AGV가 엣지 위에 있는지 체크 (노드 목록에 없으면 엣지 위로 판단)
         if current_pos not in temp_graph:
-            start_node = self.agv_prev_rout[agv_id]
+            start_node = self.agv_prev_rout[num]
         else:
             start_node = current_pos
 
@@ -178,18 +195,17 @@ class controller():
 
         # 재계산 결과 확인
         if new_rout == -1 or len(new_rout) == 0:
-            print(f"경로 재계산 실패: AGV {agv_id}, 현재 위치 {current_pos}, 시작 위치 {start_node}, 목표 위치 {current_goal}")
+            print(f"경로 재계산 실패: AGV {num}, 현재 위치 {current_pos}, 시작 위치 {start_node}, 목표 위치 {current_goal}")
             return False  # 실패
         else:
-            self.agv_rout[agv_id] = new_rout
+            self.agv_rout[num] = new_rout
             return True  # 성공
 
     # Action: Wait AGV    
-    def wait(self, agv_id):
-        self.control_buffer[agv_id] = (0, 0)
-        self.agv_mode[agv_id] = (0, 0)
+    def wait(self, num):
+        self.control_buffer[num] = (0, 0)
+        self.agv_mode[num] = (0, 0)
     
-    # 수정 절대 금지! (수정해버림 ㅋ)
     def dijkstra_rout(self):
         # Get the Dijkstra rout of AGVs
         for num in self.agv_nums:
